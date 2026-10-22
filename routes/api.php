@@ -6,7 +6,7 @@ use Illuminate\Support\Facades\Route;
 Route::prefix('v1')->group(function () {
     Route::get(
         '/health',
-        fn() => ApiResponse::success(
+        fn () => ApiResponse::success(
             data: [
                 'status' => 'healthy',
             ],

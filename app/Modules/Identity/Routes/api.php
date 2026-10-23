@@ -1,6 +1,7 @@
 <?php
 
 use App\Modules\Identity\Http\Controllers\LoginController;
+use App\Modules\Identity\Http\Controllers\LogoutController;
 use App\Modules\Identity\Http\Controllers\MeController;
 use App\Modules\Identity\Http\Controllers\RegisterController;
 use Illuminate\Support\Facades\Route;
@@ -20,6 +21,11 @@ Route::prefix('auth')->group(function () {
         Route::get('/me', [
             MeController::class,
             'show',
+        ]);
+
+        Route::post('/logout', [
+            LogoutController::class,
+            'destroy',
         ]);
     });
 });

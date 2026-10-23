@@ -1,6 +1,7 @@
 <?php
 
 use App\Models\User;
+use App\Modules\Tenancy\Enums\TenantRole;
 use App\Modules\Tenancy\Models\Tenant;
 use App\Modules\Tenancy\Models\TenantMembership;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -65,12 +66,12 @@ test('user can belong to multiple tenants with different roles', function () {
             ->tenantMemberships()
             ->where('tenant_id', $tenantA->id)
             ->firstOrFail()->role,
-    )->toBe('owner');
+    )->toBe(TenantRole::Owner);
 
     expect(
         $user
             ->tenantMemberships()
             ->where('tenant_id', $tenantB->id)
             ->firstOrFail()->role,
-    )->toBe('agent');
+    )->toBe(TenantRole::Agent);
 });

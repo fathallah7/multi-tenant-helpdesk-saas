@@ -15,4 +15,6 @@ Route::prefix('v1')->group(function () {
     );
 
     require app_path('Modules/Tenancy/Routes/api.php');
+    require app_path('Modules/Identity/Routes/api.php');
+
 });

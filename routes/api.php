@@ -13,4 +13,6 @@ Route::prefix('v1')->group(function () {
             message: 'SupportHub API is running.',
         ),
     );
+
+    require app_path('Modules/Tenancy/Routes/api.php');
 });

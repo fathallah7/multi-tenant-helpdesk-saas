@@ -7,10 +7,33 @@ use App\Modules\Tenancy\Http\Requests\StoreTenantRequest;
 use App\Modules\Tenancy\Http\Resources\TenantResource;
 use App\Shared\Http\Responses\ApiResponse;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
 class TenantController
 {
+    public function index(Request $request): JsonResponse
+    {
+        $memberships = $request->user()
+            ->tenantMemberships()
+            ->with('tenant')
+            ->get();
+
+        $tenants = $memberships->map(
+            fn ($membership): array => [
+                ...(new TenantResource($membership->tenant))
+                    ->resolve($request),
+
+                'role' => $membership->role->value,
+            ],
+        );
+
+        return ApiResponse::success(
+            data: $tenants->values()->all(),
+            message: 'Tenants retrieved successfully.',
+        );
+    }
+
     public function store(
         StoreTenantRequest $request,
         CreateTenantAction $action,

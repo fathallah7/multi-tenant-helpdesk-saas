@@ -7,10 +7,15 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/tenants', [
         TenantController::class,
         'index',
-    ])->middleware('auth:sanctum');
+    ]);
 
     Route::post('/tenants', [
         TenantController::class,
         'store',
+    ]);
+
+    Route::get('/tenants/{tenant}', [
+        TenantController::class,
+        'show',
     ]);
 });

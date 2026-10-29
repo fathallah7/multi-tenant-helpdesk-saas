@@ -24,7 +24,7 @@ final class TenantPolicy
         return $this->view($user, $tenant);
     }
 
-    public function manageMember(User $user, Tenant $tenant): bool
+    public function manageMembers(User $user, Tenant $tenant): bool
     {
         return TenantMembership::query()
             ->where('user_id', $user->id)

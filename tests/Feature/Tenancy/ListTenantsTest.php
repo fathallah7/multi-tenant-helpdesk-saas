@@ -53,7 +53,6 @@ test('user can only list tenants they belong to', function () {
         ]);
 });
 
-
 test('suspended memberships are excluded from tenant listing', function () {
     $user = User::factory()->create();
 
@@ -91,7 +90,6 @@ test('suspended memberships are excluded from tenant listing', function () {
             'slug' => 'suspended-company',
         ]);
 });
-
 
 test('guest cannot list tenants', function () {
     $this->getJson('/api/v1/tenants')

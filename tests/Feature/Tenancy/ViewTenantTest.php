@@ -68,28 +68,28 @@ test('user cannot view another tenant', function () {
         ->assertJsonPath('success', false);
 });
 
-        test('inactive member cannot view their tenant', function () {
-            $owner = User::factory()->create();
-            $agent = User::factory()->create();
+test('inactive member cannot view their tenant', function () {
+    $owner = User::factory()->create();
+    $agent = User::factory()->create();
 
-            $tenant = app(CreateTenantAction::class)->execute(
-                owner: $owner,
-                name: 'Acme Support',
-                slug: 'acme-support',
-            );
+    $tenant = app(CreateTenantAction::class)->execute(
+        owner: $owner,
+        name: 'Acme Support',
+        slug: 'acme-support',
+    );
 
-            TenantMembership::query()->create([
-                'tenant_id' => $tenant->id,
-                'user_id' => $agent->id,
-                'role' => TenantRole::Agent->value,
-                'status' => MembershipStatus::Suspended->value,
-            ]);
+    TenantMembership::query()->create([
+        'tenant_id' => $tenant->id,
+        'user_id' => $agent->id,
+        'role' => TenantRole::Agent->value,
+        'status' => MembershipStatus::Suspended->value,
+    ]);
 
-            Sanctum::actingAs($agent);
+    Sanctum::actingAs($agent);
 
-            $this->getJson("/api/v1/tenants/{$tenant->id}")
-                ->assertForbidden();
-        });
+    $this->getJson("/api/v1/tenants/{$tenant->id}")
+        ->assertForbidden();
+});
 
 test('guest cannot view a tenant', function () {
     $owner = User::factory()->create();

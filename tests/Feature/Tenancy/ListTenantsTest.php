@@ -53,6 +53,46 @@ test('user can only list tenants they belong to', function () {
         ]);
 });
 
+
+test('suspended memberships are excluded from tenant listing', function () {
+    $user = User::factory()->create();
+
+    $activeTenant = Tenant::query()->create([
+        'name' => 'Active Company',
+        'slug' => 'active-company',
+    ]);
+
+    $suspendedTenant = Tenant::query()->create([
+        'name' => 'Suspended Company',
+        'slug' => 'suspended-company',
+    ]);
+
+    TenantMembership::query()->create([
+        'tenant_id' => $activeTenant->id,
+        'user_id' => $user->id,
+        'role' => TenantRole::Owner,
+        'status' => MembershipStatus::Active,
+    ]);
+
+    TenantMembership::query()->create([
+        'tenant_id' => $suspendedTenant->id,
+        'user_id' => $user->id,
+        'role' => TenantRole::Agent,
+        'status' => MembershipStatus::Suspended,
+    ]);
+
+    Sanctum::actingAs($user);
+
+    $this->getJson('/api/v1/tenants')
+        ->assertOk()
+        ->assertJsonCount(1, 'data')
+        ->assertJsonPath('data.0.id', $activeTenant->id)
+        ->assertJsonMissing([
+            'slug' => 'suspended-company',
+        ]);
+});
+
+
 test('guest cannot list tenants', function () {
     $this->getJson('/api/v1/tenants')
         ->assertUnauthorized();

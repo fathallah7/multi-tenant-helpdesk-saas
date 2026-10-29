@@ -1,6 +1,7 @@
 <?php
 
 use App\Modules\Tenancy\Http\Controllers\TenantController;
+use App\Modules\Tenancy\Http\Controllers\TenantInvitationController;
 use App\Modules\Tenancy\Http\Controllers\TenantMemberController;
 use Illuminate\Support\Facades\Route;
 
@@ -24,4 +25,9 @@ Route::middleware('auth:sanctum')->group(function () {
         TenantMemberController::class,
         'index',
     ]);
+
+    Route::post('/tenants/{tenant}/invitations', [
+        TenantInvitationController::class,
+        'store',
+    ])->middleware('throttle:10,1');
 });

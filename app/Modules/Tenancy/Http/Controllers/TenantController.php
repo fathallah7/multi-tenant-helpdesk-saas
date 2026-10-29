@@ -3,6 +3,7 @@
 namespace App\Modules\Tenancy\Http\Controllers;
 
 use App\Modules\Tenancy\Actions\CreateTenantAction;
+use App\Modules\Tenancy\Enums\MembershipStatus;
 use App\Modules\Tenancy\Http\Requests\StoreTenantRequest;
 use App\Modules\Tenancy\Http\Resources\TenantResource;
 use App\Modules\Tenancy\Models\Tenant;
@@ -18,6 +19,7 @@ class TenantController
     {
         $memberships = $request->user()
             ->tenantMemberships()
+            ->where('status', MembershipStatus::Active)
             ->with('tenant')
             ->get();
 

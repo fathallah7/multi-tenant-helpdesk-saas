@@ -1,415 +1,297 @@
 # SupportHub
 
-SupportHub is an API-first, multi-tenant helpdesk SaaS built with Laravel. It
-is designed for companies that need isolated workspaces, support-team access,
-customer tickets, conversations, and subscription billing in one application.
+**A multi-tenant helpdesk REST API built with Laravel 13, PostgreSQL, Sanctum, Pest, and Laravel Queues.**
+
+SupportHub is an API-first portfolio project for managing company workspaces, support-team memberships, and (soon) support tickets with **real-time internal conversations**. Its focus is secure tenant isolation, role-based authorization, database consistency, asynchronous processing, and maintainable Laravel architecture.
 
 > [!IMPORTANT]
-> SupportHub is under active development. Authentication and the tenancy
-> foundation are implemented; ticketing, conversations, and billing are still
-> planned. The application is not production-ready.
+> **Status: Active development — Identity complete; Tenancy invitation workflow implemented; membership administration and Tickets still in progress.**
+> This is a learning/portfolio backend, not a production-ready commercial SaaS. Features listed as *Planned* below are not implemented yet.
 
 ## Contents
 
-- [Current capabilities](#current-capabilities)
+- [Progress and scope](#progress-and-scope)
 - [Technology](#technology)
 - [Architecture](#architecture)
 - [Getting started](#getting-started)
-- [API](#api)
-- [Multi-tenancy](#multi-tenancy)
+- [API endpoints](#api-endpoints)
+- [Multi-tenancy and security](#multi-tenancy-and-security)
+- [Queued invitation emails](#queued-invitation-emails)
 - [Testing](#testing)
-- [Development workflow](#development-workflow)
 - [Project structure](#project-structure)
 - [Roadmap](#roadmap)
-- [Documentation](#documentation)
-- [Contributing](#contributing)
+- [Contributing and development](#contributing-and-development)
 - [License](#license)
 
-## Current capabilities
+## Progress and scope
 
-| Area | Status | Available behavior |
+| Area | Status | Current / intended behavior |
 | --- | --- | --- |
-| API foundation | Implemented | `/api/v1` routes, health check, consistent JSON responses and errors |
-| Identity | Implemented | Registration, login, current-user lookup, logout, and Sanctum tokens |
-| Tenancy | In progress | Tenant creation, listing and detail, member listing, roles, statuses, and invitations |
-| Tenant authorization | In progress | Active membership required to view tenants and members; only active owners can invite |
-| Tickets | Planned | Creation, assignment, priority, status transitions, and audit history |
-| Conversations | Planned | Customer-visible replies, internal notes, and attachments |
-| Billing | Planned | Tenant subscriptions, entitlements, and verified webhooks |
-| Notifications | In progress | Queued, encrypted invitation email; ticket and billing notifications are planned |
-| Product UI | Not started | The repository currently exposes a JSON API and a Vite/Tailwind scaffold |
+| API foundation | **Implemented** | Versioned `/api/v1` routes, health check, consistent JSON success/error responses |
+| Identity | **Implemented** | Registration, login, authenticated user, logout, Sanctum bearer tokens |
+| Tenant workspaces | **Implemented** | Create, list, and view tenants; creator becomes active Owner |
+| Tenant isolation | **Implemented for existing endpoints** | Active membership checks; members cannot read other tenants' details or member lists |
+| Membership listing | **Implemented** | Active members can list their tenant's members and statuses |
+| Invitations | **Implemented** | Owner-only invitation creation, hashed single-use tokens, 7-day expiry, queued email, authenticated acceptance |
+| Membership administration | **Planned — next** | Owner/Admin/Agent permissions, role changes, suspension/reactivation, member removal, last-owner protection |
+| Ticket management | **Planned** | Tenant-scoped ticket CRUD, priority, status changes, and agent assignment |
+| Ticket conversations | **Planned** | Persisted *internal staff* messages, message history, and secure tenant-scoped access |
+| Real-time chat | **Planned** | Laravel Reverb, Broadcasting, Echo, and private WebSocket channels for ticket messages |
+| Portfolio readiness | **Planned** | Final security tests, API documentation, CI, and deployment where practical |
 
-Implemented identity behavior includes:
+**Deliberately out of scope for this MVP:** Stripe/subscription billing, a customer portal, customer-visible chat, a separate contacts module, file attachments, SLA automation, analytics dashboards, and a full frontend. The project remains **API-first**; a minimal JavaScript client may be used to demonstrate WebSockets.
 
-- Registration with normalized email addresses and a minimum 12-character
-  password.
-- Login with rate limiting and credential verification.
-- Laravel Sanctum bearer tokens that expire after 30 days.
-- Authenticated `/me` access.
-- Logout by revoking the current access token.
+### What works today
 
-Creating a tenant and its initial active `owner` membership occurs in one
-database transaction. Active members can view their tenant and its member list.
-Active owners can invite an `agent`; the invitee must sign in with the invited
-email to accept the seven-day, single-use invitation.
+- Users register with normalized email addresses and securely hashed passwords, log in, inspect their profile, and revoke their current Sanctum token.
+- An authenticated user creates a tenant and becomes its active Owner in a single database transaction.
+- Active members can list their tenants and view their tenant and membership information; suspended users and outsiders are denied where appropriate.
+- Active Owners can invite an Agent by email. SupportHub prevents duplicate active invitations and invitations to existing members.
+- Invitation tokens are generated securely, stored as hashes, expire after seven days, and are consumed once. The recipient must log in with the invited email to accept.
+- Invitation notifications are queued for background delivery (currently exercised with a database queue and SMTP/Mailtrap).
 
 ## Technology
 
-| Area | Technology |
+| Concern | Technology |
 | --- | --- |
-| Runtime | PHP 8.3+; currently developed on PHP 8.5 |
+| Language | PHP 8.5 (project development environment) |
 | Framework | Laravel 13 |
 | Database | PostgreSQL |
-| Authentication | Laravel Sanctum 4 |
-| Tests | Pest 5 with Laravel's testing utilities |
-| Frontend tooling | Vite 8 and Tailwind CSS 4 |
-| Code style | Laravel Pint |
-| Architecture | Modular monolith |
+| Authentication | Laravel Sanctum |
+| API tests | Pest + Laravel HTTP testing |
+| Background processing | Laravel Queues (PostgreSQL database driver) |
+| Email testing | Mailtrap SMTP or Laravel `log` mailer |
+| Real-time messaging (planned) | Laravel Reverb, Broadcasting, Laravel Echo, WebSockets |
+| Code formatting | Laravel Pint |
+| Architecture | Feature-Based Modular Monolith with pragmatic application layers |
 
-Exact package constraints are defined in
-[`composer.json`](composer.json) and [`package.json`](package.json).
+See [`composer.json`](composer.json) and [`package.json`](package.json) for exact installed dependencies and version constraints. The Laravel starter may include Vite/Tailwind tooling, but a product frontend is not part of this API MVP.
 
 ## Architecture
 
-SupportHub is a modular monolith: one Laravel application and one PostgreSQL
-database, with business capabilities separated under `app/Modules`.
+SupportHub runs as **one Laravel application backed by one PostgreSQL database**. Features are organized by business capability under `app/Modules`, rather than splitting the system into microservices.
 
 ```mermaid
-flowchart LR
-    Client --> Routes[Versioned API routes]
-    Routes --> Middleware[Rate limiting and authentication]
-    Middleware --> Validation[Form Request validation]
-    Validation --> Controller
-    Controller --> Policy[Gate and tenant policy]
-    Controller --> Action[Application action]
+flowchart TD
+    Client[API client] --> Route[Versioned routes]
+    Route --> Auth[Sanctum and HTTP middleware]
+    Auth --> Request[Form Request validation]
+    Request --> Controller[Controller]
+    Controller --> Policy[Policies / Gate authorization]
+    Controller --> Action[Focused Actions for use cases]
+    Controller --> Read[Simple Eloquent reads]
     Action --> Model[Eloquent models]
-    Model --> Database[(PostgreSQL)]
-    Controller --> Resource[API Resource]
-    Resource --> Envelope[JSON response envelope]
+    Read --> Model
+    Model --> DB[(PostgreSQL)]
+    Controller --> Resource[API Resources / ApiResponse]
+    Action -. invitation event .-> Queue[Database queue]
+    Queue --> Mail[Notification worker / SMTP]
 ```
 
-The main boundaries are:
+**Module responsibilities**
 
-- `Identity` owns users, authentication, and token issuance.
-- `Tenancy` owns workspaces, memberships, tenant roles, invitations, and their
-  email notification.
-- `Shared` owns cross-cutting HTTP response and exception handling only.
-- Planned modules will own contacts, tickets, conversations, billing, and
-  broader notifications.
+- **Identity:** Global user accounts, authentication, token issuance and revocation.
+- **Tenancy:** Company workspaces, memberships, RBAC, secure invitations, and invitation notifications.
+- **Tickets (planned):** Tickets, assignments, status transitions, internal messages, and broadcasting.
+- **Shared:** Cross-cutting API response formatting and exception handling.
 
-Controllers remain thin. Form Requests validate input, actions coordinate
-business operations, Eloquent models handle persistence relationships, and API
-Resources define public representations. New abstractions are introduced only
-when a concrete use case requires them.
+We use **Actions** for meaningful state-changing use cases (especially those requiring transactions), **Policies** for authorization, **API Resources** for response shapes, and **Eloquent** for persistence and straightforward reads. Query classes or services will be added only when complexity warrants them; there is no mandatory Repository layer.
 
 ## Getting started
 
 ### Requirements
 
-- PHP 8.3 or newer
+- PHP compatible with the project's `composer.json` (development uses PHP 8.5)
 - Composer
-- PostgreSQL
-- Node.js and npm
+- PostgreSQL and a database user able to run migrations
 - Git
+- Node.js/npm only if you need the starter Vite assets
 
-### 1. Clone the repository
+### 1. Clone and install
 
 ```bash
 git clone git@github.com:fathallah7/multi-tenant-helpdesk-saas.git
 cd multi-tenant-helpdesk-saas
-```
-
-Use the repository's HTTPS clone URL instead if SSH access is not configured.
-
-### 2. Install dependencies
-
-```bash
 composer install
-npm install
-```
-
-### 3. Create the environment file
-
-```bash
 cp .env.example .env
 php artisan key:generate
 ```
 
-The starter `.env.example` defaults to SQLite. Change it to PostgreSQL before
-running migrations:
+Use the HTTPS clone URL if SSH is not configured.
+
+### 2. Configure PostgreSQL and queues
+
+Set values in your local `.env` (replace placeholders; never commit real credentials):
 
 ```dotenv
-APP_NAME="SupportHub"
+APP_NAME=SupportHub
 APP_ENV=local
 APP_DEBUG=true
+APP_URL=http://localhost:8000
 
 DB_CONNECTION=pgsql
 DB_HOST=127.0.0.1
 DB_PORT=5432
 DB_DATABASE=supporthub
-DB_USERNAME=postgres
-DB_PASSWORD=your-local-password
+DB_USERNAME=your_postgres_user
+DB_PASSWORD=your_local_password
+
+QUEUE_CONNECTION=database
+MAIL_MAILER=log
+SUPPORTHUB_FRONTEND_URL=http://localhost:3000
 ```
 
-Create the configured database and use a database role with permission to
-create tables, indexes, foreign keys, and check constraints.
+`SUPPORTHUB_FRONTEND_URL` is a placeholder for invitation acceptance links. Since the MVP is API-only, you can copy the token from a development email into the acceptance API request; a full frontend acceptance page is not implemented.
 
-### 4. Prepare the application
+For Mailtrap, replace the `log` mailer with `smtp` and configure `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, and sender details using **your own** sandbox credentials. SMTP credentials must stay in `.env`.
+
+### 3. Migrate and run
 
 ```bash
 php artisan migrate
-npm run build
-```
-
-Seeders do not currently provide application data, so `php artisan db:seed` is
-not required.
-
-### 5. Start development services
-
-```bash
-composer run dev
-```
-
-This runs the Laravel development server, queue listener, application log
-viewer, and Vite development server together. Press `Ctrl+C` to stop them.
-
-Invitation emails use the queue. Set `SUPPORTHUB_FRONTEND_URL` to the frontend
-base URL for acceptance links; it defaults to `http://localhost:3000`.
-The starter environment logs outgoing mail, so configure a mail transport to
-deliver invitations to real inboxes.
-
-For API-only work, the Laravel server can be started separately:
-
-```bash
 php artisan serve
 ```
 
-### Optional setup script
-
-After `.env` exists and contains a working PostgreSQL connection, this command
-can install dependencies, generate the application key, migrate, and build
-assets:
+The database queue requires the `jobs` table (included in the project's migrations). In a separate terminal:
 
 ```bash
-composer run setup
+php artisan queue:work database --queue=default
 ```
 
-## API
+If you edit queue configuration while workers are running, restart the workers. You can also build the optional starter assets with `npm install && npm run build`.
 
-All application API routes use the `/api/v1` prefix.
+### 4. Run the tests
 
-### Endpoints
+Use a **separate PostgreSQL test database** configured in the project's test settings. Never run database-refreshing tests against development or production data.
 
-| Method | Endpoint | Authentication | Description |
+```bash
+php artisan test
+```
+
+## API endpoints
+
+Current endpoints use the `/api/v1` prefix. Protected routes expect `Authorization: Bearer <SANCTUM_TOKEN>`.
+
+| Method | Route | Access | Description |
 | --- | --- | --- | --- |
-| `GET` | `/api/v1/health` | None | API health check |
-| `POST` | `/api/v1/auth/register` | None | Register a user and issue a token |
-| `POST` | `/api/v1/auth/login` | None | Authenticate and issue a token |
-| `GET` | `/api/v1/auth/me` | Bearer token | Return the authenticated user |
-| `POST` | `/api/v1/auth/logout` | Bearer token | Revoke the current token |
-| `GET` | `/api/v1/tenants` | Bearer token | List tenants with active memberships and the caller's role |
-| `POST` | `/api/v1/tenants` | Bearer token | Create a tenant and owner membership |
-| `GET` | `/api/v1/tenants/{tenant}` | Bearer token; active member | Return a tenant |
-| `GET` | `/api/v1/tenants/{tenant}/members` | Bearer token; active member | List tenant memberships, including suspended members |
-| `POST` | `/api/v1/tenants/{tenant}/invitations` | Bearer token; active owner | Invite an agent by email |
-| `POST` | `/api/v1/invitations/accept` | Bearer token; invited email | Accept an invitation |
+| `GET` | `/api/v1/health` | Public | Health check |
+| `POST` | `/api/v1/auth/register` | Public | Register and issue access token |
+| `POST` | `/api/v1/auth/login` | Public | Authenticate and issue access token |
+| `GET` | `/api/v1/auth/me` | Authenticated | Current user |
+| `POST` | `/api/v1/auth/logout` | Authenticated | Revoke current token |
+| `POST` | `/api/v1/tenants` | Authenticated | Create tenant with Owner membership |
+| `GET` | `/api/v1/tenants` | Authenticated | List tenants with active memberships |
+| `GET` | `/api/v1/tenants/{tenant}` | Active tenant member | View tenant |
+| `GET` | `/api/v1/tenants/{tenant}/members` | Active tenant member | List tenant memberships |
+| `POST` | `/api/v1/tenants/{tenant}/invitations` | Active tenant Owner | Invite an Agent |
+| `POST` | `/api/v1/invitations/accept` | Authenticated invitee | Accept invitation with token |
 
-Registration and login are limited to five requests per minute per Laravel's
-configured throttle middleware. Invitation creation is limited to ten requests
-per minute.
+### Response format
 
-### Response envelope
-
-Successful and failed API responses use the same top-level keys:
+SupportHub consistently uses an envelope like:
 
 ```json
 {
-    "success": true,
-    "message": "SupportHub API is running.",
-    "data": {
-        "status": "healthy"
-    },
-    "errors": null
+  "success": true,
+  "message": "Tenant retrieved successfully.",
+  "data": {
+    "id": 1,
+    "name": "Acme Support",
+    "slug": "acme-support"
+  },
+  "errors": null
 }
 ```
 
-Errors set `success` to `false`, set `data` to `null`, and return an appropriate
-HTTP status. Validation details are returned in `errors`.
+Failed requests use `success: false`, an appropriate HTTP status, `data: null`, and validation details under `errors` when applicable.
 
-### Register
-
-```bash
-curl --request POST "$API_BASE_URL/auth/register" \
-    --header 'Accept: application/json' \
-    --header 'Content-Type: application/json' \
-    --data '{
-        "name": "Ada Lovelace",
-        "email": "ada@example.com",
-        "password": "correct-horse-battery-staple",
-        "password_confirmation": "correct-horse-battery-staple"
-    }'
-```
-
-Set `API_BASE_URL` to the configured application URL followed by `/api/v1`.
-Registration returns the user, a Sanctum bearer token, and the token type.
-
-### Login
+### Example: Create a tenant
 
 ```bash
-curl --request POST "$API_BASE_URL/auth/login" \
-    --header 'Accept: application/json' \
-    --header 'Content-Type: application/json' \
-    --data '{
-        "email": "ada@example.com",
-        "password": "correct-horse-battery-staple"
-    }'
+curl -X POST http://localhost:8000/api/v1/tenants \
+  -H 'Accept: application/json' \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer YOUR_SANCTUM_TOKEN" \
+  -d '{"name":"Acme Support","slug":"acme-support"}'
 ```
 
-### Create a tenant
+### Example: Invite an agent
 
 ```bash
-curl --request POST "$API_BASE_URL/tenants" \
-    --header 'Accept: application/json' \
-    --header 'Content-Type: application/json' \
-    --header "Authorization: Bearer $SUPPORTHUB_TOKEN" \
-    --data '{
-        "name": "Acme Support",
-        "slug": "acme-support"
-    }'
+curl -X POST http://localhost:8000/api/v1/tenants/1/invitations \
+  -H 'Accept: application/json' \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer YOUR_OWNER_TOKEN" \
+  -d '{"email":"agent@example.com"}'
 ```
 
-Tenant slugs must be unique and contain lowercase letters, numbers, and single
-hyphens between segments.
+After the invitee registers or signs in with the same email address, they accept using their own bearer token:
 
-### View tenants and members
+```bash
+curl -X POST http://localhost:8000/api/v1/invitations/accept \
+  -H 'Accept: application/json' \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer YOUR_INVITEE_TOKEN" \
+  -d '{"token":"INVITATION_TOKEN_FROM_EMAIL"}'
+```
 
-`GET /api/v1/tenants` lists only workspaces where the caller has an active
-membership and includes their role. An active `owner`, `admin`, or `agent` can
-retrieve the tenant and its member list. The member list includes each user's
-name and email, role, and membership status. Suspended members cannot access
-these endpoints.
+The invitation token is **never returned by the invitation creation API**. Do not share real tokens or include them in screenshots, public logs, issues, or commits.
 
-### Invite and accept a member
+## Multi-tenancy and security
 
-An active owner can send `POST /api/v1/tenants/{tenant}/invitations` with an
-`email`. The address is trimmed and lowercased. Existing members and duplicate
-unexpired invitations are rejected with `422`. A successful `201` response
-contains the invitation ID, email, `agent` role, and expiry. The token is sent
-only in the queued email link and is never returned by the API.
+SupportHub uses a **shared PostgreSQL database and schema** with tenant-scoped access control.
 
-The invitee registers or signs in with that email, then sends the token from
-the link to `POST /api/v1/invitations/accept`. Acceptance creates an active
-membership and marks the invitation used in one transaction. Expired, revoked,
-used, and invalid invitations return `422`; a different signed-in account
-receives `403`.
+- `users` are global identities: the same account can join multiple companies.
+- `tenants` are company workspaces.
+- `tenant_memberships` connect users and tenants, with tenant-specific roles/statuses.
+- `tenant_invitations` store the invited email, role, inviter, token hash, expiration, and acceptance/revocation timestamps.
+- The implemented access rules use active memberships, explicit tenant filters, and Laravel Policies; knowing another tenant's ID must not grant access.
+- Invitation acceptance checks token validity, expiration, single use, and the authenticated recipient's email, then creates membership and marks acceptance in a single transaction.
+- The planned ticket APIs and WebSocket private channels will enforce **the same tenant boundary**, including agent permissions.
 
-Do not commit real access tokens or place them in shell history, logs, or API
-examples.
+**Current role behavior:** Owner and Agent flows are exercised; an expanded Owner/Admin/Agent permission model, role-change operations, and suspension/reactivation administration are on the roadmap. Existing membership status checks already deny suspended members access to protected tenant views.
 
-## Multi-tenancy
+## Queued invitation emails
 
-SupportHub uses a shared PostgreSQL database and schema.
+Invitation notifications implement Laravel's `ShouldQueue` (and encrypted queue payload handling), allowing the HTTP API to return without waiting for SMTP delivery. Notification dispatch is deferred until the invitation transaction commits.
 
-- `users` stores global login identities.
-- `tenants` stores company workspaces.
-- `tenant_memberships` connects users to tenants.
-- `tenant_invitations` stores the invited email, role, token hash, inviter,
-  expiry, and acceptance or revocation timestamps.
-- A user may belong to multiple tenants with a different role in each.
-- Membership roles are `owner`, `admin`, and `agent`.
-- Membership statuses are `active` and `suspended`.
+```mermaid
+flowchart LR
+    Owner[Owner] --> API[Invitation API]
+    API --> Invitation[(tenant_invitations)]
+    API --> Jobs[(jobs table)]
+    Jobs --> Worker[Laravel queue worker]
+    Worker --> SMTP[SMTP / Mailtrap]
+    SMTP --> Invitee[Invited recipient]
+    Invitee --> Accept[Authenticated acceptance API]
+    Accept --> Members[(tenant_memberships)]
+```
 
-Tenant-owned records carry `tenant_id`. Existing tenant views and invitations
-use active-membership policies; access must never rely on a request-supplied
-tenant ID alone. Future features also need tenant-scoped queries, database
-constraints, authorization, and cross-tenant tests.
-
-Customers will be modeled as tenant-scoped contacts rather than support-team
-memberships.
+For local debugging, stop the worker, create an invitation with a new email, and inspect pending jobs. Then run `php artisan queue:work database --once -v`. With `MAIL_MAILER=log`, rendered emails appear in `storage/logs/laravel.log`; use a private Mailtrap inbox for SMTP testing.
 
 ## Testing
 
-The test suite uses Pest and PostgreSQL. A separate testing database is
-mandatory because feature tests may migrate or refresh it.
+SupportHub uses **Pest feature tests with PostgreSQL**. The current suite includes tests for:
 
-Create the database configured by `DB_DATABASE` in [`phpunit.xml`](phpunit.xml)
-and ensure the local PostgreSQL credentials can access it. Never point the test
-configuration at development, staging, or production data.
-
-Run the complete suite:
-
-```bash
-php artisan test --compact
-```
-
-Run a focused file while developing:
+- Identity registration, login, logout, and token access.
+- Consistent API errors and health checks.
+- Tenant creation, relationships, listing, and active-member authorization.
+- Tenant member listing, outsider denial, and suspended-member denial.
+- Invitation creation, duplicate prevention, owner-only access, and notification dispatch with `Notification::fake()`.
+- Invitation acceptance: valid, reused, expired, revoked, wrong-account, existing-member, and unauthenticated cases.
 
 ```bash
-php artisan test --compact tests/Feature/Identity/LoginTest.php
+# Full suite
+php artisan test
+
+# Focused examples
+php artisan test tests/Feature/Tenancy/TenantInvitationTest.php
+php artisan test tests/Feature/Tenancy/AcceptTenantInvitationTest.php
 ```
 
-Run a single test by name:
+`Notification::fake()` verifies application intent, not worker execution. The database queue and SMTP path are additionally checked manually. The full test suite should be run after the latest changes before merging or publishing; a successful run is not claimed here.
 
-```bash
-php artisan test --compact --filter='user can log in'
-```
-
-The current suite covers:
-
-- Health and unknown API routes.
-- Registration validation and token creation.
-- Login success, invalid credentials, and throttling.
-- Authenticated-user retrieval and unauthenticated access.
-- Current-token revocation on logout.
-- Tenant membership relationships and multi-tenant membership.
-- Tenant creation, active-membership listing, tenant views, and member access.
-- Invitation permissions, validation, duplicate prevention, and acceptance
-  rules.
-
-Every tenant-owned feature must add tests proving that a user from one tenant
-cannot read or modify another tenant's data.
-
-## Development workflow
-
-### Before changing code
-
-1. Check the relevant module and sibling files for existing conventions.
-2. Confirm installed package versions before using version-specific APIs.
-3. Add or update the narrowest meaningful Pest tests.
-4. Keep changes within an existing module unless a new business capability
-   clearly requires a new one.
-
-### Useful commands
-
-```bash
-# Inspect application routes
-php artisan route:list --except-vendor
-
-# Run a focused test file
-php artisan test --compact tests/Feature/Identity/LoginTest.php
-
-# Format changed PHP files
-vendor/bin/pint --dirty --format agent
-
-# Build production frontend assets
-npm run build
-```
-
-### Code conventions
-
-- Use strict, descriptive types and explicit return types.
-- Use Form Requests for HTTP validation.
-- Use API Resources for public response representations.
-- Keep controllers focused on HTTP coordination.
-- Use actions for multi-step use cases and transactions.
-- Use PHP backed enums for stable application values.
-- Preserve tenant integrity with authorization, scoped queries, and database
-  constraints.
-- Prefer Eloquent and Laravel conventions over unnecessary repositories or
-  infrastructure layers.
-- Create new migrations for schema changes after a migration has been shared or
-  applied.
-- Never commit `.env`, credentials, access tokens, or production data.
+**Test principle:** Verify meaningful business and security behavior, especially cross-tenant access, invalid credentials/tokens, concurrency-sensitive state changes, and authorization rules.
 
 ## Project structure
 
@@ -420,89 +302,50 @@ app/
 ├── Modules/
 │   ├── Identity/
 │   │   ├── Actions/
-│   │   ├── Http/
-│   │   │   ├── Controllers/
-│   │   │   ├── Requests/
-│   │   │   └── Resources/
-│   │   └── Routes/
+│   │   └── Http/{Controllers,Requests,Resources}/
 │   └── Tenancy/
 │       ├── Actions/
 │       ├── Enums/
-│       ├── Http/
+│       ├── Http/{Controllers,Requests,Resources}/
 │       ├── Models/
 │       ├── Notifications/
-│       ├── Policies/
-│       └── Routes/
-└── Shared/
-    └── Http/
-        ├── Exceptions/
-        └── Responses/
+│       └── Policies/
+└── Shared/Http/{Exceptions,Responses}/
 
-database/
-├── factories/
-├── migrations/
-└── seeders/
-
-docs/
-├── architecture/
-└── database/
-
-routes/
-└── api.php
-
-tests/
-├── Feature/
-│   ├── Identity/
-│   ├── Shared/
-│   └── Tenancy/
-└── Unit/
+database/migrations/
+tests/Feature/{Identity,Tenancy,Shared}/
 ```
 
-Each module owns its routes and business behavior. The root API route file
-assembles module routes under `/api/v1`.
+A **Tickets** module will be added for ticket management, internal messages, and real-time broadcasts. The exact folder structure may evolve as those features are implemented.
 
 ## Roadmap
 
-The expected delivery order follows feature dependencies:
+The remaining scope is deliberately short so this can become a **finished, demonstrable portfolio API** instead of an ever-expanding commercial SaaS.
 
-1. Complete tenant context, remaining member management, and isolation tests.
-2. Add tenant-scoped customer contacts.
-3. Implement ticket creation, listing, assignment, and status transitions.
-4. Add public replies, internal notes, attachments, and ticket history.
-5. Select a billing provider and implement subscriptions and entitlements.
-6. Add ticket and billing notifications, operational monitoring, and deployment
-   configuration.
-7. Complete security, performance, and production-readiness reviews.
+- [x] Project foundation: Laravel, PostgreSQL, response/error conventions, Pest.
+- [x] Identity: registration, login, current user, and Sanctum logout.
+- [x] Tenants: create/list/show, owner membership, tenant policies and isolation tests.
+- [x] Membership listing and invitation creation with queued email delivery.
+- [x] Secure invitation acceptance and focused creation/acceptance tests added.
+- [ ] **Finish membership administration:** Owner/Admin/Agent permissions, role changes, suspend/reactivate, remove, last active Owner safeguards.
+- [ ] **Tickets:** tenant-scoped CRUD, priority, assignment, status changes, focused tests.
+- [ ] **Internal ticket conversation:** stored staff messages, message history/pagination, per-ticket authorization.
+- [ ] **Real-time delivery:** Laravel Reverb, private tenant/ticket broadcast channels, Echo and a minimal demo client.
 
-Optional features such as tags, read receipts, realtime presence, and in-app
-notifications should follow the core ticket workflow rather than precede it.
+### Future ideas (not MVP commitments)
 
-## Documentation
+Customer portal and external replies, contact management, attachments, billing/subscriptions, search/analytics, SLAs, typing indicators, read receipts, and richer monitoring.
 
-- [`System architecture`](docs/architecture/README.md) explains module
-  boundaries, request flow, API conventions, and tenant isolation.
-- [`Database architecture`](docs/database/README.md) records the current schema,
-  integrity rules, and planned entity relationships.
+## Contributing and development
 
-Keep these documents synchronized with implemented behavior. Migration files,
-routes, and automated tests remain authoritative when documentation becomes
-stale.
+A focused workflow is preferred:
 
-## Contributing
-
-1. Create a focused branch.
-2. Follow the existing module structure and naming conventions.
-3. Add tests for new behavior and regressions.
-4. Run focused tests while developing, then run the complete suite.
-5. Format changed PHP files with Pint.
-6. Update relevant documentation when behavior or architecture changes.
-7. Submit a small, clearly described pull request.
-
-Cross-tenant data exposure, leaked credentials, and authentication bypasses are
-security issues. Report them privately to the repository owner rather than in a
-public issue.
+1. Keep changes within the relevant feature module.
+2. Write targeted Pest tests for new business behavior and regressions.
+3. Run the full suite and `vendor/bin/pint --dirty` before merging.
+4. Update API documentation/README when behavior changes.
+5. Never commit `.env`, SMTP/API credentials, invitation tokens, access tokens, or real customer data. Report potential security issues privately.
 
 ## License
 
-The project metadata in [`composer.json`](composer.json) declares the MIT
-license.
+See [`composer.json`](composer.json) and the repository's license file, if present, for the licensing terms.

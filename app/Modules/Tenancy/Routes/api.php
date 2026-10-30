@@ -1,5 +1,6 @@
 <?php
 
+use App\Modules\Tenancy\Http\Controllers\AcceptTenantInvitationController;
 use App\Modules\Tenancy\Http\Controllers\TenantController;
 use App\Modules\Tenancy\Http\Controllers\TenantInvitationController;
 use App\Modules\Tenancy\Http\Controllers\TenantMemberController;
@@ -30,4 +31,9 @@ Route::middleware('auth:sanctum')->group(function () {
         TenantInvitationController::class,
         'store',
     ])->middleware('throttle:10,1');
+
+    Route::post('/invitations/accept', [
+        AcceptTenantInvitationController::class,
+        'store',
+    ]);
 });

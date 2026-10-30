@@ -2,7 +2,7 @@
 
 > **Database:** PostgreSQL  
 > **Status:** Current schema and durable design rules  
-> **Last reviewed:** 23 October 2026  
+> **Last reviewed:** 30 October 2026\
 > **Related:** [`System architecture`](../architecture/README.md)
 
 ## Purpose
@@ -14,7 +14,7 @@ relationships between modules.
 
 ## Current schema
 
-All repository migrations are applied in the current development database:
+The repository defines these migrations:
 
 | Migration | Tables created |
 | --- | --- |
@@ -24,6 +24,7 @@ All repository migrations are applied in the current development database:
 | `2026_10_21_150708_create_personal_access_tokens_table` | `personal_access_tokens` |
 | `2026_10_22_142059_create_tenants_table` | `tenants` |
 | `2026_10_22_142100_create_tenant_memberships_table` | `tenant_memberships` |
+| `2026_10_29_103436_create_tenant_invitations_table` | `tenant_invitations` |
 
 PostgreSQL also maintains Laravel's `migrations` table. Cache, queue, session,
 password reset, and Sanctum tables are framework infrastructure rather than
@@ -35,10 +36,14 @@ tenant-owned business data.
 erDiagram
     USERS ||--o{ TENANT_MEMBERSHIPS : has
     TENANTS ||--o{ TENANT_MEMBERSHIPS : has
+    TENANTS ||--o{ TENANT_INVITATIONS : sends
+    USERS ||--o{ TENANT_INVITATIONS : invites
 ```
 
 A user is a global identity and may belong to multiple tenants. Roles and
 membership status belong to the membership, never to the global user.
+Invitations reference the inviter; the invitee is identified by email until
+acceptance creates a membership.
 
 ### `users`
 
@@ -88,6 +93,28 @@ The table enforces:
 Tenant creation and its initial active owner membership are written in one
 application transaction.
 
+### `tenant_invitations`
+
+| Column | Rule |
+| --- | --- |
+| `id` | Primary key |
+| `tenant_id` | Required foreign key to `tenants`; cascades on tenant deletion |
+| `email` | Invited address, normalized to lowercase and trimmed by the application |
+| `role` | Role to assign on acceptance; invitations currently use `agent` |
+| `token_hash` | Unique SHA-256 hash of the invitation token; raw token is not stored |
+| `invited_by` | Required foreign key to `users`; restricted on delete |
+| `expires_at` | Required timezone-aware expiry timestamp |
+| `accepted_at`, `revoked_at` | Nullable timezone-aware lifecycle timestamps |
+| `created_at`, `updated_at` | Timezone-aware timestamps |
+
+The table indexes `(tenant_id, email)` for invitation lookup. There is no
+database uniqueness constraint on that pair, allowing historical invitations.
+The invitation action serializes creation per tenant and rejects an existing
+member or an unexpired pending invitation for the same email. Tokens expire
+after seven days and can be accepted once. Acceptance writes the membership
+and `accepted_at` in one transaction; email delivery is queued after the
+invitation transaction commits.
+
 ## Tenancy rules
 
 Every future tenant-owned table must follow these rules:
@@ -117,7 +144,6 @@ constraints, and indexes immediately before its migrations are created.
 erDiagram
     USERS ||--o{ TENANT_MEMBERSHIPS : has
     TENANTS ||--o{ TENANT_MEMBERSHIPS : has
-    TENANTS ||--o{ TENANT_INVITATIONS : sends
     TENANTS ||--o{ CONTACTS : owns
     TENANTS ||--o{ TICKETS : owns
     CONTACTS ||--o{ TICKETS : requests
@@ -130,7 +156,6 @@ erDiagram
 
 | Module | Planned entities | Essential decision |
 | --- | --- | --- |
-| Tenancy | `tenant_invitations` | Tokens are expiring, single-use, and stored as hashes |
 | Customers | `contacts` | Customers are tenant-scoped and are not staff memberships |
 | Tickets | `tickets`, `ticket_events` | Requester and assignee must belong to the ticket's tenant |
 | Conversations | `ticket_messages`, `ticket_attachments` | Public replies and internal notes have enforced visibility |

@@ -31,12 +31,12 @@ customer tickets, conversations, and subscription billing in one application.
 | --- | --- | --- |
 | API foundation | Implemented | `/api/v1` routes, health check, consistent JSON responses and errors |
 | Identity | Implemented | Registration, login, current-user lookup, logout, and Sanctum tokens |
-| Tenancy | In progress | Tenant creation, owner membership, roles, statuses, and relationships |
-| Tenant authorization | Planned | Active tenant context, invitations, policies, and isolation enforcement |
+| Tenancy | In progress | Tenant creation, listing and detail, member listing, roles, statuses, and invitations |
+| Tenant authorization | In progress | Active membership required to view tenants and members; only active owners can invite |
 | Tickets | Planned | Creation, assignment, priority, status transitions, and audit history |
 | Conversations | Planned | Customer-visible replies, internal notes, and attachments |
 | Billing | Planned | Tenant subscriptions, entitlements, and verified webhooks |
-| Notifications | Planned | Queued ticket and billing notifications |
+| Notifications | In progress | Queued, encrypted invitation email; ticket and billing notifications are planned |
 | Product UI | Not started | The repository currently exposes a JSON API and a Vite/Tailwind scaffold |
 
 Implemented identity behavior includes:
@@ -49,7 +49,9 @@ Implemented identity behavior includes:
 - Logout by revoking the current access token.
 
 Creating a tenant and its initial active `owner` membership occurs in one
-database transaction.
+database transaction. Active members can view their tenant and its member list.
+Active owners can invite an `agent`; the invitee must sign in with the invited
+email to accept the seven-day, single-use invitation.
 
 ## Technology
 
@@ -78,6 +80,7 @@ flowchart LR
     Routes --> Middleware[Rate limiting and authentication]
     Middleware --> Validation[Form Request validation]
     Validation --> Controller
+    Controller --> Policy[Gate and tenant policy]
     Controller --> Action[Application action]
     Action --> Model[Eloquent models]
     Model --> Database[(PostgreSQL)]
@@ -88,9 +91,11 @@ flowchart LR
 The main boundaries are:
 
 - `Identity` owns users, authentication, and token issuance.
-- `Tenancy` owns workspaces, memberships, tenant roles, and tenant status.
+- `Tenancy` owns workspaces, memberships, tenant roles, invitations, and their
+  email notification.
 - `Shared` owns cross-cutting HTTP response and exception handling only.
-- Planned modules will own tickets, conversations, billing, and notifications.
+- Planned modules will own contacts, tickets, conversations, billing, and
+  broader notifications.
 
 Controllers remain thin. Form Requests validate input, actions coordinate
 business operations, Eloquent models handle persistence relationships, and API
@@ -168,6 +173,11 @@ composer run dev
 This runs the Laravel development server, queue listener, application log
 viewer, and Vite development server together. Press `Ctrl+C` to stop them.
 
+Invitation emails use the queue. Set `SUPPORTHUB_FRONTEND_URL` to the frontend
+base URL for acceptance links; it defaults to `http://localhost:3000`.
+The starter environment logs outgoing mail, so configure a mail transport to
+deliver invitations to real inboxes.
+
 For API-only work, the Laravel server can be started separately:
 
 ```bash
@@ -197,10 +207,16 @@ All application API routes use the `/api/v1` prefix.
 | `POST` | `/api/v1/auth/login` | None | Authenticate and issue a token |
 | `GET` | `/api/v1/auth/me` | Bearer token | Return the authenticated user |
 | `POST` | `/api/v1/auth/logout` | Bearer token | Revoke the current token |
+| `GET` | `/api/v1/tenants` | Bearer token | List tenants with active memberships and the caller's role |
 | `POST` | `/api/v1/tenants` | Bearer token | Create a tenant and owner membership |
+| `GET` | `/api/v1/tenants/{tenant}` | Bearer token; active member | Return a tenant |
+| `GET` | `/api/v1/tenants/{tenant}/members` | Bearer token; active member | List tenant memberships, including suspended members |
+| `POST` | `/api/v1/tenants/{tenant}/invitations` | Bearer token; active owner | Invite an agent by email |
+| `POST` | `/api/v1/invitations/accept` | Bearer token; invited email | Accept an invitation |
 
 Registration and login are limited to five requests per minute per Laravel's
-configured throttle middleware.
+configured throttle middleware. Invitation creation is limited to ten requests
+per minute.
 
 ### Response envelope
 
@@ -265,6 +281,28 @@ curl --request POST "$API_BASE_URL/tenants" \
 Tenant slugs must be unique and contain lowercase letters, numbers, and single
 hyphens between segments.
 
+### View tenants and members
+
+`GET /api/v1/tenants` lists only workspaces where the caller has an active
+membership and includes their role. An active `owner`, `admin`, or `agent` can
+retrieve the tenant and its member list. The member list includes each user's
+name and email, role, and membership status. Suspended members cannot access
+these endpoints.
+
+### Invite and accept a member
+
+An active owner can send `POST /api/v1/tenants/{tenant}/invitations` with an
+`email`. The address is trimmed and lowercased. Existing members and duplicate
+unexpired invitations are rejected with `422`. A successful `201` response
+contains the invitation ID, email, `agent` role, and expiry. The token is sent
+only in the queued email link and is never returned by the API.
+
+The invitee registers or signs in with that email, then sends the token from
+the link to `POST /api/v1/invitations/accept`. Acceptance creates an active
+membership and marks the invitation used in one transaction. Expired, revoked,
+used, and invalid invitations return `422`; a different signed-in account
+receives `403`.
+
 Do not commit real access tokens or place them in shell history, logs, or API
 examples.
 
@@ -275,14 +313,16 @@ SupportHub uses a shared PostgreSQL database and schema.
 - `users` stores global login identities.
 - `tenants` stores company workspaces.
 - `tenant_memberships` connects users to tenants.
+- `tenant_invitations` stores the invited email, role, token hash, inviter,
+  expiry, and acceptance or revocation timestamps.
 - A user may belong to multiple tenants with a different role in each.
 - Membership roles are `owner`, `admin`, and `agent`.
 - Membership statuses are `active` and `suspended`.
 
-Future tenant-owned records will carry `tenant_id`. Tenant access must be
-derived from an authenticated, active membership rather than trusting a
-request-supplied tenant ID. Application policies, tenant-scoped queries,
-database constraints, and cross-tenant tests will provide defense in depth.
+Tenant-owned records carry `tenant_id`. Existing tenant views and invitations
+use active-membership policies; access must never rely on a request-supplied
+tenant ID alone. Future features also need tenant-scoped queries, database
+constraints, authorization, and cross-tenant tests.
 
 Customers will be modeled as tenant-scoped contacts rather than support-team
 memberships.
@@ -322,6 +362,9 @@ The current suite covers:
 - Authenticated-user retrieval and unauthenticated access.
 - Current-token revocation on logout.
 - Tenant membership relationships and multi-tenant membership.
+- Tenant creation, active-membership listing, tenant views, and member access.
+- Invitation permissions, validation, duplicate prevention, and acceptance
+  rules.
 
 Every tenant-owned feature must add tests proving that a user from one tenant
 cannot read or modify another tenant's data.
@@ -387,6 +430,8 @@ app/
 │       ├── Enums/
 │       ├── Http/
 │       ├── Models/
+│       ├── Notifications/
+│       ├── Policies/
 │       └── Routes/
 └── Shared/
     └── Http/
@@ -420,12 +465,12 @@ assembles module routes under `/api/v1`.
 
 The expected delivery order follows feature dependencies:
 
-1. Complete tenant context, invitations, policies, and isolation tests.
+1. Complete tenant context, remaining member management, and isolation tests.
 2. Add tenant-scoped customer contacts.
 3. Implement ticket creation, listing, assignment, and status transitions.
 4. Add public replies, internal notes, attachments, and ticket history.
 5. Select a billing provider and implement subscriptions and entitlements.
-6. Add queued notifications, operational monitoring, and deployment
+6. Add ticket and billing notifications, operational monitoring, and deployment
    configuration.
 7. Complete security, performance, and production-readiness reviews.
 

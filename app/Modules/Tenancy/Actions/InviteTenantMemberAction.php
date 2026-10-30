@@ -56,7 +56,9 @@ final class InviteTenantMemberAction
                 ->exists();
 
             if ($pendingInvitation) {
-                TenantInvitation::query()->where('email', $email)->delete();
+                throw ValidationException::withMessages([
+                    'email' => 'An active invitation already exists.',
+                ]);
             }
 
             $token = bin2hex(random_bytes(32));

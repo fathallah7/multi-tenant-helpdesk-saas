@@ -3,6 +3,7 @@
 namespace App\Shared\Http\Exceptions;
 
 use App\Shared\Http\Responses\ApiResponse;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -24,13 +25,23 @@ final class ApiExceptionRenderer
         if ($exception instanceof ValidationException) {
             return ApiResponse::error(
                 message: 'Validation failed.',
-                status: 422,
+                status: Response::HTTP_UNPROCESSABLE_ENTITY,
                 errors: $exception->errors(),
             );
         }
 
         if ($exception instanceof AuthenticationException) {
-            return ApiResponse::error(message: 'Unauthenticated.', status: 401);
+            return ApiResponse::error(
+                message: 'Unauthenticated.',
+                status: Response::HTTP_UNAUTHORIZED
+            );
+        }
+
+        if ($exception instanceof AuthorizationException) {
+            return ApiResponse::error(
+                message: 'Forbidden.',
+                status: Response::HTTP_FORBIDDEN,
+            );
         }
 
         if ($exception instanceof HttpExceptionInterface) {
